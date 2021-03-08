@@ -48,61 +48,107 @@ const writeDescription = function (languageCode, abstract, proposal) {
 };
 
 const initCapampaign = async function (req, res) {
-  if (!app.freshInstall) {
-    return res.redirect("/");
-  }
+  try {
+    //TODO God willing: Logic for what campaigns to allow.
+    // ex. paid to a wallet
+    // ex. webhook invoice on bitcart/btcpayserver
+    // ex. recipients includes one of our addresses (or we add it anyways)
+    // ex. submitted a contribution to one of our main campaigns, hosted campaigns, God willing.
 
-  req.app.debug.server("Init campaign from " + req.ip);
+    //TODO God willing: provide proof of ownership by signing with private key.
+    const freshInstall = app.freshInstall
 
-  // Convert date to EPOCH
-  const start_year = req.body.start_year;
-  const start_month = req.body.start_month;
-  const start_day = req.body.start_day;
-  let start_date = moment(start_year + "-" + start_month + "-" + start_day);
-  start_date = start_date.unix();
+    if (!freshInstall) {
 
-  const end_year = req.body.end_year;
-  const end_month = req.body.end_month;
-  const end_day = req.body.end_day;
-  let end_date = moment(end_year + "-" + end_month + "-" + end_day);
-  end_date = end_date.unix();
+      const recipientAddresses = req.body && req.body.recipients && req.body.recipients.map(r => r.address)
 
-  // Actually initialize the campaign with the POST data
-  app.queries.addCampaign.run({
-    title: req.body.title,
-    starts: Number(start_date),
-    expires: Number(end_date),
-  });
-  // Add all Users + Recipients
-  const users = req.body.recipient_name;
+      //TODO God willing: join and filter by revoked status. May want to "revoke" campaign if contribution is revoked
+      if (!recipientAddresses.find(address => {
+        const commitmentsByAddress = app.queries.getCommitmentsByAddress.all({ 
+          address
+        })
 
-  for (let i in users) {
-    app.queries.addUser.run({
-      user_url: req.body.project_url[i],
-      user_image: req.body.image_url[i],
-      user_alias: req.body.recipient_name[i],
-      user_address: req.body.bch_address[i],
-      data_signature: null,
+        //TODO God willing: option for only confirmed, God willing.
+        return !!commitmentsByAddress.length
+      })) {
+        return res.status(403).json({ error: "No commitments found for recipient address. Access denied."})
+      }
+    }
+
+    req.app.debug.server("Init campaign from " + req.ip);
+    
+    const campaignData = req.body
+    const hasData = !!campaignData && !isNaN(Number(campaignData.starts)) && !isNaN(Number(campaignData.expires))
+    const hasRecipients = hasData && campaignData.recipients && campaignData.recipients.length && campaignData.recipients.every(r => {
+      //TODO God willing: validate addresses and satoshis (more than dust)
+      return r.address && r.satoshis
+    })
+
+    if (!hasData || !hasRecipients) {
+      throw "Invalid campaign data"
+    }
+
+    // Actually initialize the campaign with the POST data
+    const getDescriptionLanguage = (code) => {
+      const description = campaignData.descriptions && campaignData.descriptions[code] || {}
+      return {
+        abstract: description.abstract || "",
+        proposal: description.proposal || ""
+      }
+    }
+
+    const { abstract = "", proposal = "" } = getDescriptionLanguage("en")
+    const { abstractES = "", proposalES = "" } = getDescriptionLanguage("es")
+    const { abstractZH = "", proposalZH = "" } = getDescriptionLanguage("zh")
+    const { abstractJA = "", proposalJA = "" } = getDescriptionLanguage("ja")
+
+    const createCampaignResult = app.queries.addCampaign.run({
+      title: campaignData.title,
+      starts: Number(campaignData.starts),
+      expires: Number(campaignData.expires),
+      abstract,
+      proposal,
+      abstractJA,
+      proposalJA,
+      abstractES,
+      proposalES,
+      abstractZH,
+      proposalZH
     });
-    app.queries.addRecipientToCampaign.run({
-      user_id: Number(i) + 1,
-      campaign_id: 1,
-      recipient_satoshis: Number(req.body.amount[i]) * 100000000, // to satoshis
-    });
+
+    campaignData.recipients.forEach((recipient, i) => {
+      const addUserResult = app.queries.addUser.run({
+        user_url: recipient.url,
+        user_image: recipient.image,
+        user_alias: recipient.name,
+        user_address: recipient.address,
+        data_signature: null,
+      });
+
+      app.queries.addRecipientToCampaign.run({
+        user_id: addUserResult.lastInsertRowid,
+        campaign_id: createCampaignResult.lastInsertRowid,
+        recipient_satoshis: recipient.satoshis
+      });
+    })
+
+    // IMPORTANT: do not let the user access this page again
+    // and redirect to home if they try
+    app.freshInstall = false;
+
+    if (freshInstall) {
+      // Render a success message
+      return res.redirect("/")
+    }
+
+    //TODO God willing: return address (general or specific to campaign) for contributors to send to.
+    // id isn't necessary if address encapsulates it, God willing
+    return res.status(200).json({ id: createCampaignResult.lastInsertRowid });
+  
+  } catch (err) {
+    req.app.debug.server(err)
+    return res.status(400).end()
   }
-
-  // Write in /static/campaigns
-  writeDescription("en", req.body.abstract, req.body.proposal);
-  writeDescription("zh", req.body.abstractZH, req.body.proposalZH);
-  writeDescription("es", req.body.abstractES, req.body.proposalES);
-  writeDescription("ja", req.body.abstractJA, req.body.proposalJA);
-
-  // IMPORTANT: do not let the user access this page again
-  // and redirect to home if they try
-  app.freshInstall = false;
-
-  // Render a success message
-  return res.redirect("/");
 };
 
 // Call create when this route is requested.

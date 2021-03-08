@@ -79,6 +79,9 @@ module.exports = function (app) {
     getCommitment: app.sql.prepare(
       Filesystem.readFileSync("sql/get_commitment.sql", "utf8").trim()
     ),
+    getCommitmentsByAddress: app.sql.prepare(
+      Filesystem.readFileSync("sql/get_commitments_by_address.sql", "utf8").trim()
+    ),
     getCommitmentByHashAndIndex: app.sql.prepare(
       Filesystem.readFileSync(
         "sql/get_commitment_by_hash_and_index.sql",

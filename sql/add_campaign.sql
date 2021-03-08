@@ -2,11 +2,27 @@ INSERT OR ROLLBACK INTO campaigns
 (
     title,
 	starts,
-	expires
+	expires,
+	abstract,
+	proposal,
+	abstractJA,
+	proposalJA,
+	abstractES,
+	proposalES,
+	abstractZH,
+	proposalZH
 )
 VALUES
 (
     :title,
 	:starts,
-	:expires
+	:expires,
+	:abstract,
+	:proposal,
+	:abstractJA,
+	:proposalJA,
+	:abstractES,
+	:proposalES,
+	:abstractZH,
+	:proposalZH
 )

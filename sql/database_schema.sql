@@ -15,6 +15,14 @@ CREATE TABLE IF NOT EXISTS campaigns
 	title TEXT NOT NULL,
 	starts INTEGER NOT NULL,
 	expires INTEGER NOT NULL,
+	proposal TEXT NOT NULL DEFAULT '',
+	abstract TEXT NOT NULL DEFAULT '',
+	proposalZH TEXT NOT NULL DEFAULT '',
+	abstractZH TEXT NOT NULL DEFAULT '',
+	proposalES TEXT NOT NULL DEFAULT '',
+	abstractES TEXT NOT NULL DEFAULT '',
+	proposalJA TEXT NOT NULL DEFAULT '',
+	abstractJA TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (campaign_id)
 );
 
@@ -59,6 +67,7 @@ CREATE TABLE IF NOT EXISTS commitments
 	unlock_script BLOB NOT NULL,
 	sequence_number INTEGER NOT NULL DEFAULT X'FFFFFFFF',
 	satoshis INTEGER NOT NULL,
+	address TEXT NOT NULL,
 	PRIMARY KEY (commitment_id),
 	UNIQUE (previous_transaction_hash, previous_transaction_index)
 );

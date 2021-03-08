@@ -18,8 +18,20 @@ const campaignInformation = async function (req, res) {
     campaign_id: req.params["campaign_id"],
   });
 
+  
   const result = {
-    campaign: campaign,
+    campaign: {
+      id: campaign.campaign_id,
+      title: campaign.title,
+      starts: campaign.starts,
+      expires: campaign.expires,
+      descriptions: {
+        en: { abstract: campaign.abstract, proposal: campaign.proposal },
+        es: { abstract: campaign.abstractES, proposal: campaign.proposalES },
+        zh: { abstract: campaign.abstractZH, proposal: campaign.proposalZH },
+        ja: { abstract: campaign.abstractJA, proposal: campaign.proposalJA }
+      }
+    },
     recipients: recipients,
   };
 

@@ -4,7 +4,8 @@ INSERT OR ROLLBACK INTO commitments
 	previous_transaction_index,
 	unlock_script,
 	sequence_number,
-	satoshis
+	satoshis,
+	address
 )
 VALUES
 (
@@ -12,5 +13,6 @@ VALUES
 	:previous_transaction_index,
 	:unlock_script,
 	:sequence_number,
-	:satoshis
+	:satoshis,
+	:address
 )

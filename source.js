@@ -144,6 +144,14 @@ class flipstarter {
         this.updateTranslation.bind(this, "es", "Spanish")
       );
 
+    // Fetch the campaign information from the backend.
+    let response = await fetch(`/campaign/${CAMPAIGN_ID}`);
+    let fundraiser = await response.json();
+
+    this.campaign = fundraiser.campaign;
+    this.campaign.recipients = fundraiser.recipients;
+    this.campaign.contributions = {};
+
     // Get the main language from the browser.
     const language = window.navigator.language.slice(0, 2);
 
@@ -154,18 +162,13 @@ class flipstarter {
     await this.loadCurrencyRates();
 
     // Apply website translation (or load website content).
-    this.applyTranslation(language);
-
-    // Fetch the campaign information from the backend.
-    let response = await fetch(`/campaign/${CAMPAIGN_ID}`);
-    let fundraiser = await response.json();
-
-    this.campaign = fundraiser.campaign;
-    this.campaign.recipients = fundraiser.recipients;
-    this.campaign.contributions = {};
+    await this.applyTranslation(language);
 
     // Update the campaign status and timer.
     this.updateTimerPresentation();
+
+    // Update the timer every second.
+    setInterval(this.updateExpiration.bind(this), 1000);
 
     //
     this.updateRecipientCount(this.campaign.recipients.length);
@@ -310,9 +313,6 @@ class flipstarter {
       "message",
       parseContributionEvents.bind(this)
     );
-
-    // Update the timer every second.
-    setInterval(this.updateExpiration.bind(this), 1000);
   }
 
   showFullfilledStatus(fullfillment_transaction) {
@@ -567,12 +567,6 @@ class flipstarter {
     // Initiate all requests in parallell.
     this.translationContentPromises = {
       interfaceResponse: fetch(`/static/ui/${languageCode}/interface.json`),
-      introResponse: fetch(
-        `/static/campaigns/${CAMPAIGN_ID}/${languageCode}/abstract.md`
-      ),
-      detailResponse: fetch(
-        `/static/campaigns/${CAMPAIGN_ID}/${languageCode}/proposal.md`
-      ),
     };
 
     // Wait for all requests to complete..
@@ -626,21 +620,10 @@ class flipstarter {
       (obj) => obj.code === currencies[languageCode]
     ).rate;
 
-    // Parse the campaign translations.
-    const campaignIntro = await (
-      await this.translationContentPromises.introResponse
-    ).text();
-    const campaignDetail = await (
-      await this.translationContentPromises.detailResponse
-    ).text();
-
     // Print out the campaign texts.
-    document.getElementById("campaignAbstract").innerHTML = DOMPurify.sanitize(
-      marked(campaignIntro)
-    );
-    document.getElementById("campaignDetails").innerHTML = DOMPurify.sanitize(
-      marked(campaignDetail)
-    );
+    document.getElementById("campaignAbstract").innerHTML = DOMPurify.sanitize(marked(this.campaign.descriptions[languageCode].abstract));
+    document.getElementById("campaignDetails").innerHTML = DOMPurify.sanitize(marked(this.campaign.descriptions[languageCode].proposal));
+
 
     // Parse the interface translation.
     this.translation = await (
