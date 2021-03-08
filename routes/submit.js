@@ -11,6 +11,7 @@ const router = express.Router();
 // Load the bitbox library.
 const bitboxSDK = require("bitbox-sdk");
 const bitbox = new bitboxSDK.BITBOX();
+const retry = require('p-retry')
 
 // Load the bitbox backend depency directly to get access to unexposed class necessary for signature verification.
 const ECSignature = require("@bitcoin-dot-com/bitcoincashjs2-lib").ECSignature;
@@ -70,6 +71,28 @@ const calculateMinerFee = function (RECIPIENT_COUNT, CONTRIBUTION_COUNT) {
   // Return the calculated miner fee.
   return MINER_FEE;
 };
+
+function getOutputScriptPubKeyHex(output) {
+  const scriptPubKey = output.scriptPubKey
+  const scriptPubKeyHex = typeof(scriptPubKey) === 'object' ? scriptPubKey.hex : scriptPubKey
+  if (typeof(scriptPubKeyHex) !== 'string') {
+    throw new Error('invalid script pubkey')
+  }
+
+  return scriptPubKeyHex
+}
+
+function getOutputValue(output) {
+  if(output.value_satoshi) {
+    return output.value_satoshi
+  } 
+
+  if (Number.isInteger(output.value)) {
+    return output.value
+  }
+
+  return Number((output.value * SATS_PER_BCH).toFixed())
+}
 
 // Wrap the submission function in an async function.
 const submitContribution = async function (req, res) {
@@ -191,14 +214,31 @@ const submitContribution = async function (req, res) {
         const currentInput = contributionObject.inputs[inputIndex];
 
         // Fetch the referenced transaction.
-        const inputTransaction = await req.app.electrum.request(
-          "blockchain.transaction.get",
-          currentInput.previous_output_transaction_hash,
-          true
-        );
+        let inputTransaction
+        
+        try {
+          
+          inputTransaction = await retry(async (attempt) => {
+            
+            const inputTransaction = await req.app.electrum.request(
+              "blockchain.transaction.get",
+              currentInput.previous_output_transaction_hash,
+              true
+            );
+    
+            // Check if the transaction has error code 2 (missing UTXO).
+            if (inputTransaction.code === 2) {
+              throw new Error("UTXO not verified")
+            }
 
-        // Check if the transaction has error code 2 (missing UTXO).
-        if (inputTransaction.code === 2) {
+            return inputTransaction
+          }, {
+            retries: 5,
+            maxTimeout: 2000
+          })
+          
+        } catch (ex) {
+
           // Send an "NOT FOUND" signal back to the client.
           res.status(404).json({
             status: `The UTXO ('${currentInput.previous_output_transaction_hash}') could not be verified as unspent.`,
@@ -214,37 +254,51 @@ const submitContribution = async function (req, res) {
         }
 
         // Store the inputs value.
-        const inputSatoshis =
-          inputTransaction.vout[currentInput.previous_output_index].value *
-          SATS_PER_BCH;
+        const inputSatoshis = getOutputValue(inputTransaction.vout[currentInput.previous_output_index])
 
         // Add this inputs satoshis to the total amount.
         totalSatoshis += inputSatoshis;
 
         // Store the inputs lockscript.
         const inputLockScript = Buffer.from(
-          inputTransaction.vout[currentInput.previous_output_index].scriptPubKey
-            .hex,
+          getOutputScriptPubKeyHex(inputTransaction.vout[currentInput.previous_output_index]),
           "hex"
         );
-
+        
         // Hash the inputs lockscript to use for requesting UTXOs (Why can't electrum take the UTXO directly and give me info about it???)
         const inputLockScriptHash = bitbox.Crypto.sha256(inputLockScript);
 
         // Get a list of unspent outputs for the input address.
-        const inputUTXOs = await req.app.electrum.request(
-          "blockchain.scripthash.listunspent",
-          javascriptUtilities.reverseBuf(inputLockScriptHash).toString("hex")
-        );
+        let inputUTXO
+        
+        try {
+          
+          inputUTXO = await retry(async (attempt) => {
+            
+            const inputUTXOs = await req.app.electrum.request(
+              "blockchain.scripthash.listunspent",
+              javascriptUtilities.reverseBuf(inputLockScriptHash).toString("hex")
+            );
+    
+            // Locate the UTXO in the list of unspent transaction outputs.
+            const inputUTXO = inputUTXOs.find(
+              (utxo) =>
+                utxo.tx_hash === currentInput.previous_output_transaction_hash
+            );
+    
+            // Verify that we can find the UTXO.
+            if (typeof inputUTXO === "undefined") {
+              throw new Error("UTXO not verified")
+            }
 
-        // Locate the UTXO in the list of unspent transaction outputs.
-        const inputUTXO = inputUTXOs.find(
-          (utxo) =>
-            utxo.tx_hash === currentInput.previous_output_transaction_hash
-        );
+            return inputUTXO
+          }, {
+            retries: 5,
+            maxTimeout: 2000
+          })
 
-        // Verify that we can find the UTXO.
-        if (typeof inputUTXO === "undefined") {
+        } catch (ex) {
+
           // Send an "NOT FOUND" signal back to the client.
           res.status(404).json({
             status: `The UTXO ('${currentInput.previous_output_transaction_hash}') could not be verified as unspent.`,
@@ -318,6 +372,7 @@ const submitContribution = async function (req, res) {
           unlock_script: Buffer.from(currentInput.unlocking_script, "hex"),
           sequence_number: 0xffffffff,
           satoshis: inputUTXO.value,
+          address: bitbox.Address.fromOutputScript(inputLockScript, "testnet")
         });
 
         // If we have not yet subscribed to this script hash..
