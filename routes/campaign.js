@@ -18,7 +18,11 @@ const campaignInformation = async function (req, res) {
     campaign_id: req.params["campaign_id"],
   });
 
-  
+  if (typeof campaign === "undefined") {
+    res.status(404).end()
+    return
+  }
+
   const result = {
     campaign: {
       id: campaign.campaign_id,

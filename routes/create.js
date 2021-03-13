@@ -12,64 +12,46 @@ const create = async function (req, res) {
   // Notify the server admin that a campaign has been requested.
   req.app.debug.server("Create page requested from " + req.ip);
 
-  if (!app.freshInstall) {
-    return res.redirect("/");
+  let apiUrl = (process.env.FLIPSTARTER_API_URL || req.get('host')).replace(/\/$/, "")
+
+  if (!apiUrl.match(/^(http:\/\/|https:\/\/|\/\/)/)) {
+    apiUrl = "//" + apiUrl
+  }
+  
+  let gatewayUrl = (process.env.FLIPSTARTER_IPFS_GATEWAY_URL || "https://ipfs.io").replace(/\/$/, "")
+
+  if (!gatewayUrl.match(/^(http:\/\/|https:\/\/|\/\/)/)) {
+    gatewayUrl = "//" + gatewayUrl
   }
 
-  // Render HTML
-  renderer.view("create.html", res);
-  res.end();
+  const redirectUrl = `${gatewayUrl}/ipfs/${process.env.FLIPSTARTER_IPFS_CREATE_CID}?api_address=${apiUrl}&api_type=https` 
+  res.redirect(redirectUrl);
 
   // Notify the server admin that a campaign has been requested.
   req.app.debug.server("Create page delivered to " + req.ip);
 };
 
-const writeDescription = function (languageCode, abstract, proposal) {
-  fs.mkdirSync("./static/campaigns/1/" + languageCode, { recursive: true });
-  // Handle descripion
-  fs.writeFile(
-    "./static/campaigns/1/" + languageCode + "/abstract.md",
-    abstract,
-    function (err) {
-      if (err) {
-        return console.log(err);
-      }
-    }
-  );
-  fs.writeFile(
-    "./static/campaigns/1/" + languageCode + "/proposal.md",
-    proposal,
-    function (err) {
-      if (err) {
-        return console.log(err);
-      }
-    }
-  );
-};
-
 const initCapampaign = async function (req, res) {
   try {
-    //TODO God willing: Logic for what campaigns to allow.
-    // ex. paid to a wallet
-    // ex. webhook invoice on bitcart/btcpayserver
-    // ex. recipients includes one of our addresses (or we add it anyways)
-    // ex. submitted a contribution to one of our main campaigns, hosted campaigns, God willing.
 
-    //TODO God willing: provide proof of ownership by signing with private key.
+
     const freshInstall = app.freshInstall
 
-    if (!freshInstall) {
+    if (!freshInstall && process.env.FLIPSTARTER_API_AUTH !== "no-auth") {
 
       const recipientAddresses = req.body && req.body.recipients && req.body.recipients.map(r => r.address)
 
-      //TODO God willing: join and filter by revoked status. May want to "revoke" campaign if contribution is revoked
-      if (!recipientAddresses.find(address => {
-        const commitmentsByAddress = app.queries.getCommitmentsByAddress.all({ 
-          address
-        })
+      let filterCommitments
+      
+      if (process.env.FLIPSTARTER_API_AUTH == "pending-contributions") {
+        filterCommitments = (c) => c.campaign_id == 1 && (!c.revocation_id || (c.fullfillment_timestamp && c.revocation_timestamp > c.fullfillment_timestamp))
+      } else if (process.env.FLIPSTARTER_API_AUTH === "confirmed-contributions") {
+        filterCommitments = (c) => c.campaign_id == 1 && c.fullfillment_timestamp && c.revocation_timestamp > c.fullfillment_timestamp
+      }
 
-        //TODO God willing: option for only confirmed, God willing.
-        return !!commitmentsByAddress.length
+      if (!recipientAddresses.find(address => {
+        const commitmentsByAddress = app.queries.getCommitmentsByAddress.all({ address })
+        return commitmentsByAddress.find(filterCommitments)
       })) {
         return res.status(403).json({ error: "No commitments found for recipient address. Access denied."})
       }
@@ -136,14 +118,15 @@ const initCapampaign = async function (req, res) {
     // and redirect to home if they try
     app.freshInstall = false;
 
-    if (freshInstall) {
-      // Render a success message
-      return res.redirect("/")
+    let address = (process.env.FLIPSTARTER_API_URL || req.get('host')).replace(/\/$/, "")
+
+    if (!address.match(/^(http:\/\/|https:\/\/|\/\/)/)) {
+      address = "//" + address
     }
 
-    //TODO God willing: return address (general or specific to campaign) for contributors to send to.
-    // id isn't necessary if address encapsulates it, God willing
-    return res.status(200).json({ id: createCampaignResult.lastInsertRowid });
+    const id = createCampaignResult.lastInsertRowid
+
+    return res.status(200).json({ id, address });
   
   } catch (err) {
     req.app.debug.server(err)

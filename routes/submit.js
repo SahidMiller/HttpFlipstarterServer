@@ -194,6 +194,40 @@ const submitContribution = async function (req, res) {
         );
       }
 
+      //Check that recipients haven't opted out
+      if (parseInt(req.params["campaign_id"]) !== 1 && process.env.FLIPSTARTER_API_AUTH !== "no-auth") {
+        
+        req.app.debug.server(
+          "Checking recipients contribution not revoked " + req.ip
+        );
+
+        let filterCommitments
+      
+        if (process.env.FLIPSTARTER_API_AUTH == "pending-contributions") {
+          filterCommitments = (c) => c.campaign_id == 1 && (!c.revocation_id || (c.fullfillment_timestamp && c.revocation_timestamp > c.fullfillment_timestamp))
+        } else if (process.env.FLIPSTARTER_API_AUTH === "confirmed-contributions") {
+          filterCommitments = (c) => c.campaign_id == 1 && c.fullfillment_timestamp && c.revocation_timestamp > c.fullfillment_timestamp
+        }
+        //Check that all recipients have commitments to the first campaign that are not revoked, God willing.
+        const isContributionRevoked = !recipients.every(recipient => {
+          const address = recipient.user_address
+          const commitmentsByAddress = req.app.queries.getCommitmentsByAddress.all({ address })
+          return commitmentsByAddress.find(filterCommitments)
+        })
+
+        if (isContributionRevoked) {
+
+          // Send an BAD REQUEST signal back to the client.
+          res.status(400).json({
+            error: `Campaign (${req.params["campaign_id"]}) is suspended.`,
+          });
+
+          req.app.debug.server("Campaign revoked" + req.ip)
+
+          return
+        }
+      }
+
       // Get currently committed information.
       const currentCommittedSatoshis = req.app.queries.getCampaignCommittedSatoshis.get(
         { campaign_id: Number(req.params["campaign_id"]) }
@@ -537,37 +571,25 @@ const submitContribution = async function (req, res) {
         });
       }
 
-      // Get an updates list of contributions.
-      const campaignContributions = req.app.queries.listAllContributions.all();
-
-      // Update the initial push for the SSE stream.
-      req.app.sse.updateInit(campaignContributions);
-
       // Get the currently added contribution.
       const contributionData = req.app.queries.getContribution.get({
         contribution_id: storeContributionResult.lastInsertRowid,
       });
 
       // Push the contribution to the SSE stream.
-      req.app.sse.send(contributionData);
+      req.app.sse.event(req.params["campaign_id"], {
+        event: "contribution", 
+        data: contributionData
+      });
 
-      // Set up a filter function that..
-      const filterOnCampaign = function (contribution) {
-        // Return true if the contribution has not been revoced AND is from the correct campaign.
-        return (
-          !contribution.revocation_id &&
-          contribution.campaign_id === Number(req.params["campaign_id"])
-        );
-      };
-
-      // Filter out irrelevant contributions.
-      const relevantContributions = campaignContributions.filter(
-        filterOnCampaign
-      );
+      // Get an updates list of contributions.
+      const campaignContributions = req.app.queries.listContributionsByCampaign.all({ 
+        campaign_id: req.params["campaign_id"]
+      }).filter(c => !c.revocation_id)
 
       // Add relevant contributions to the contract..
-      for (const currentContribution in relevantContributions) {
-        const commitment = relevantContributions[currentContribution];
+      for (const currentContribution in campaignContributions) {
+        const commitment = campaignContributions[currentContribution];
 
         const commitmentObject = {
           previousTransactionHash: commitment.previous_transaction_hash,
@@ -610,7 +632,10 @@ const submitContribution = async function (req, res) {
             req.app.queries.addCampaignFullfillment.run(fullfillmentObject);
 
             // Push the fullfillment to the SSE stream.
-            req.app.sse.send(fullfillmentObject);
+            req.app.sse.event(req.params["campaign_id"], {
+              event: "fullfillment", 
+              data: fullfillmentObject
+            });
 
             // Notify the server admin that a campaign has been fullfilled.
             req.app.debug.action(

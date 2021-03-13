@@ -38,7 +38,9 @@ const asyncMutex = require("async-mutex").Mutex;
 
 // Include support for express applications.
 const express = require("express");
-const SSE = require("express-sse");
+const { sseHub, Hub } = require("@toverux/expresse");
+const eventsMiddleware = require("./routes/eventsMiddleware");
+
 
 // Create an instance of an express application.
 const app = express();
@@ -57,7 +59,19 @@ const setup = async function () {
   app.use(bodyParser.json());
 
   // Create a server-sent event stream.
-  app.sse = new SSE();
+  const hubs = {}
+  app.sse = {
+    //Handle requests from server to push to clients
+    event: (campaignId, eventData) => {
+      
+      if (!hubs[campaignId]) {
+        hubs[campaignId] = new Hub();
+      }
+
+      const hub = hubs[campaignId]
+      hub.event(campaignId, eventData)
+    }
+  }
 
   // Load the configuration file.
   app.config = require("./config.js");
@@ -95,7 +109,36 @@ const setup = async function () {
   app.use("/static", express.static("static"));
 
   // Event handling
-  app.get("/events", app.sse.init);
+  app.get("/events/:campaign_id/", eventsMiddleware((req) => {
+    //Don't return a hub if the campaign doesn't exist
+    //Fetch the campaign data.
+    const campaignId = req.params["campaign_id"]
+    const campaign = req.app.queries.getCampaign.get({
+      campaign_id: campaignId,
+    });
+
+    if (typeof campaign === "undefined") {
+      return
+    }
+
+    if (!hubs[campaignId]) {
+      hubs[campaignId] = new Hub()
+    }
+
+    return hubs[campaignId]
+
+  }), (req, res) => {
+    
+    const campaignContributions = req.app.queries.listContributionsByCampaign.all({ 
+      campaign_id: req.params["campaign_id"]
+    }).filter(c => !c.revocation_id)
+    
+    res.sse.event("init", campaignContributions)
+  });
+
+  if (process.env.FLIPSTARTER_API_AUTH !== "confirmed-contributions" && process.env.FLIPSTARTER_API_AUTH !== "pending-contributions" && process.env.FLIPSTARTER_API_AUTH !== "no-auth") {
+    throw "export FLIPSTARTER_API_AUTH; valid values: confirmed-contributions, pending-contributions, no-auth. current: " + process.env.FLIPSTARTER_API_AUTH
+  }
 
   // Initialize an empty set of scripthashes that we are subscribed to.
   app.subscribedScriphashes = {};
@@ -201,11 +244,6 @@ const setup = async function () {
               commitment_id: commitment.commitment_id,
             });
 
-            // Get an updates list of contributions.
-            const campaignContributions = app.queries.listAllContributions.all();
-
-            // Update the initial push for the SSE stream.
-            app.sse.updateInit(campaignContributions);
 
             // Get the currently added contribution.
             const contributionData = app.queries.getContributionByCommitment.get(
@@ -218,7 +256,10 @@ const setup = async function () {
               !contributionData.fullfillment_id
             ) {
               // Push the contribution to the SSE stream.
-              app.sse.send(contributionData);
+              app.sse.event(contributionData.campaign_id, {
+                event: "revocation",
+                data: contributionData
+              });
             }
 
             // If we are currently subscribed to changes for this script hash..
@@ -312,12 +353,6 @@ const setup = async function () {
 
   // Wait for all verifications to complete.
   await Promise.all(verificationPromises);
-
-  // Get a list of all contributions for all campaigns.
-  const verifiedContributions = app.queries.listAllContributions.all();
-
-  // Update the initial SSE stream with the contributions.
-  app.sse.updateInit(verifiedContributions);
 
   //
   // app.use('/status', require('./routes/status.js'));

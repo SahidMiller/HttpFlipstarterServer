@@ -9,28 +9,25 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "debug": "DEBUG='flipstarter:*' node --use-strict server.js",
     "verbose": "DEBUG='flipstarter:*, -flipstarter:object' node --use-strict server.js",
-    "start": "npx webpack -o static/js/application.js && DEBUG='flipstarter:status, flipstarter:server' node --use-strict server.js",
-    "start-no-debug": "npx webpack -o static/js/application.js && node --use-strict server.js"
+    "start": "DEBUG='flipstarter:status, flipstarter:server' node --use-strict server.js",
+    "start-no-debug": "node --use-strict server.js"
   },
   "author": "Jonathan Silverblood",
   "license": "MIT",
   "dependencies": {
+    "@toverux/expresse": "^2.4.0",
     "async-mutex": "^0.1.4",
     "better-sqlite3": "^5.4.3",
     "bitbox-sdk": "^8.11.2",
-    "canvas-confetti": "^1.2.0",
+    "compose-middleware": "^5.0.1",
     "cors": "^2.8.5",
     "debug": "^4.1.1",
-    "dompurify": "^2.0.12",
     "electrum-cash": "^2.0.1",
     "express": "^4.17.1",
     "express-sse": "^0.5.1",
-    "marked": "^1.1.1",
     "materialize-css": "^1.0.0",
     "moment": "^2.27.0",
-    "p-retry": "^4.4.0",
-    "webpack": "^4.44.1",
-    "webpack-cli": "^3.3.12"
+    "p-retry": "^4.4.0"
   },
   "devDependencies": {
     "eslint": "^6.8.0"

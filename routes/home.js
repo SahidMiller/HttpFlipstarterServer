@@ -11,13 +11,8 @@ const home = async function (req, res) {
   req.app.debug.server("Home page requested from " + req.ip);
 
   // Redirect to campaign creation page if no campaign was created
-  if (app.freshInstall) {
-    return res.redirect("/create");
-  }
-
-  // Render HTML
-  renderer.view("index.html", res);
-  res.end();
+  const homeRedirect = process.env.FLIPSTARTER_API_REDIRECT_HOME_URL || "/create"
+  res.redirect(app.freshInstall ? "/create" : homeRedirect);
 
   // Notify the server admin that a campaign has been requested.
   req.app.debug.server("Home page delivered to " + req.ip);

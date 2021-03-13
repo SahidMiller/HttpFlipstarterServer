@@ -39,6 +39,22 @@ docker run -v flipstarter:/app/static/campaigns -p 3000:3000 flipstarter
 
 And open up [localhost:3000](http://localhost:3000) in your browser.
 
+### Environment variables
+
+```
+  ENV FLIPSTARTER_IPFS_GATEWAY_URL="https://ipfs.io"
+  ENV FLIPSTARTER_IPFS_CREATE_CID="QmaELvSGKBzBCP1pGSMQzdizcXQCzfwpQpuYsqvcpEGPXb"
+
+  //Used in /create route, GET and POST methods
+  ENV FLIPSTARTER_API_URL="https://..." 
+  
+  //Used in /home route, GET method
+  ENV FLIPSTARTER_API_REDIRECT_HOME_URL="https://..." 
+
+  //Used in /create and /submit routes.
+  //Valid values no-auth, pending-contributions, confirmed-contributions
+  ENV FLIPSTARTER_API_AUTH="pending-contributions"
+```
 ### Contribute
 
 Submit pull requests at https://gitlab.com/flipstarter/backend
