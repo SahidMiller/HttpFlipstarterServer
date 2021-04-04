@@ -42,19 +42,22 @@ And open up [localhost:3000](http://localhost:3000) in your browser.
 ### Environment variables
 
 ```
-  ENV FLIPSTARTER_IPFS_GATEWAY_URL="https://ipfs.io"
-  ENV FLIPSTARTER_IPFS_CREATE_CID="QmaELvSGKBzBCP1pGSMQzdizcXQCzfwpQpuYsqvcpEGPXb"
+  ENV FLIPSTARTER_IPFS_GATEWAY_URL="http://..."       //defaults to "https://ipfs.io"
+  ENV FLIPSTARTER_IPFS_CREATE_CID="Qm..."             //defaults to QmaELvSGKBzBCP1pGSMQzdizcXQCzfwpQpuYsqvcpEGPXb"
 
-  //Used in /create route, GET and POST methods
-  ENV FLIPSTARTER_API_URL="https://..." 
+  ENV FLIPSTARTER_API_URL="https://..."               //defaults to req.get('host')
   
-  //Used in /home route, GET method
-  ENV FLIPSTARTER_API_REDIRECT_HOME_URL="https://..." 
+  ENV FLIPSTARTER_API_REDIRECT_HOME_URL="https://..." //defaults to /create
 
-  //Used in /create and /submit routes.
-  //Valid values no-auth, pending-contributions, confirmed-contributions
-  ENV FLIPSTARTER_API_AUTH="pending-contributions"
+  ENV FLIPSTARTER_API_AUTH="pending-contributions"    //required
 ```
+
+`FLIPSTARTER_API_URL` refers to the servers public address (returned to user to embed in their client side flipstarter page)
+`FLIPSTARTER_API_REDIRECT_HOME_URL` refers to the URL to redirect for root (/) GET requests (set this to redirect to a default campaign)
+`FLIPSTARTER_API_AUTH` refers to authentication scheme. Valid values include  'no-auth', 'pending-contributions', 'confirmed-contributions'
+  no-auth: anyone can create a flipstarter
+  pending-contributions: anyone who's contributed to the default campaign (refuses to store contributions if revoked)
+  confirmed-contributions: anyone who's contributed to a fully funded campaign
 ### Contribute
 
 Submit pull requests at https://gitlab.com/flipstarter/backend

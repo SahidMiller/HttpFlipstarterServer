@@ -52,25 +52,6 @@ class javascriptUtilities {
   }
 }
 
-const calculateMinerFee = function (RECIPIENT_COUNT, CONTRIBUTION_COUNT) {
-  // Aim for two satoshis per byte to get a clear margin for error and priority on fullfillment.
-  const TARGET_FEE_RATE = 2;
-
-  // Define byte weights for different transaction parts.
-  const TRANSACTION_METADATA_BYTES = 10;
-  const AVERAGE_BYTE_PER_RECIPIENT = 69;
-  const AVERAGE_BYTE_PER_CONTRIBUTION = 296;
-
-  // Calculate the miner fee necessary to cover a fullfillment transaction with the next (+1) contribution.
-  const MINER_FEE =
-    (TRANSACTION_METADATA_BYTES +
-      AVERAGE_BYTE_PER_RECIPIENT * RECIPIENT_COUNT +
-      AVERAGE_BYTE_PER_CONTRIBUTION * (CONTRIBUTION_COUNT + 1)) *
-    TARGET_FEE_RATE;
-
-  // Return the calculated miner fee.
-  return MINER_FEE;
-};
 
 function getOutputScriptPubKeyHex(output) {
   const scriptPubKey = output.scriptPubKey
@@ -185,11 +166,11 @@ const submitContribution = async function (req, res) {
       const recipients = req.app.queries.listRecipientsByCampaign.all({
         campaign_id: Number(req.params["campaign_id"]),
       });
-
+      
       // Add each recipient as outputs.
       for (const recipientIndex in recipients) {
         contract.addOutput(
-          recipients[recipientIndex].recipient_satoshis,
+          parseInt(recipients[recipientIndex].recipient_satoshis),
           recipients[recipientIndex].user_address
         );
       }
@@ -228,18 +209,6 @@ const submitContribution = async function (req, res) {
         }
       }
 
-      // Get currently committed information.
-      const currentCommittedSatoshis = req.app.queries.getCampaignCommittedSatoshis.get(
-        { campaign_id: Number(req.params["campaign_id"]) }
-      ).committed_satoshis;
-      const currentContributionCount = req.app.queries.countCommitmentsByCampaign.get(
-        { campaign_id: Number(req.params["campaign_id"]) }
-      ).commitment_count;
-      const currentMinerFee = calculateMinerFee(
-        recipients.length,
-        currentContributionCount
-      );
-
       let newCommitments = [];
       let totalSatoshis = 0;
 
@@ -261,7 +230,8 @@ const submitContribution = async function (req, res) {
             );
     
             // Check if the transaction has error code 2 (missing UTXO).
-            if (inputTransaction.code === 2) {
+            if (!inputTransaction || inputTransaction.code === 2 || inputTransaction instanceof Error) {
+
               throw new Error("UTXO not verified")
             }
 
@@ -316,8 +286,7 @@ const submitContribution = async function (req, res) {
     
             // Locate the UTXO in the list of unspent transaction outputs.
             const inputUTXO = inputUTXOs.find(
-              (utxo) =>
-                utxo.tx_hash === currentInput.previous_output_transaction_hash
+              (utxo) => utxo.tx_hash === currentInput.previous_output_transaction_hash && utxo.tx_pos === currentInput.previous_output_index
             );
     
             // Verify that we can find the UTXO.
@@ -406,7 +375,7 @@ const submitContribution = async function (req, res) {
           unlock_script: Buffer.from(currentInput.unlocking_script, "hex"),
           sequence_number: 0xffffffff,
           satoshis: inputUTXO.value,
-          address: bitbox.Address.fromOutputScript(inputLockScript, "testnet")
+          address: bitbox.Address.fromOutputScript(inputLockScript, process.env.NODE_ENV === "development" ? "testnet" : "mainnet"),
         });
 
         // If we have not yet subscribed to this script hash..
@@ -458,92 +427,7 @@ const submitContribution = async function (req, res) {
         // Return false to indicate failure and stop processing.
         return false;
       }
-
-      // Define a helper function we need to calculate the floor.
-      const inputPercentModifier = async function (inputPercent) {
-        const commitmentsPerTransaction = 650;
-
-        // Calculate how many % of the total fundraiser the smallest acceptable contribution is at the moment.
-        const remainingValue =
-          currentMinerFee +
-          (contract.totalContractOutputValue - currentCommittedSatoshis);
-
-        const currentTransactionSize = 42; // this.contract.assembleTransaction().byteLength;
-
-        const minPercent =
-          0 +
-          (remainingValue /
-            (commitmentsPerTransaction - currentContributionCount) +
-            546 / SATS_PER_BCH) /
-          remainingValue;
-        const maxPercent =
-          1 -
-          ((currentTransactionSize + 1650 + 49) * 1.0) /
-          (remainingValue * SATS_PER_BCH);
-
-        // ...
-        const minValue = Math.log(minPercent * 100);
-        const maxValue = Math.log(maxPercent * 100);
-
-        // Return a percentage number on a non-linear scale with higher resolution in the lower boundaries.
-        return (
-          Math.exp(minValue + (inputPercent * (maxValue - minValue)) / 100) /
-          100
-        );
-      };
-
-      // Calculate the current floor
-      const currentFloor = Math.ceil(
-        (contract.totalContractOutputValue +
-          currentMinerFee -
-          currentCommittedSatoshis) *
-        (await inputPercentModifier(0.75))
-      );
-
-      // Verify that the current contribution does not undercommit the contract floor.
-      if (totalSatoshis < currentFloor) {
-        // Send an BAD REQUEST signal back to the client.
-        res.status(400).json({
-          status: `The contribution amount ('${Math.round(
-            totalSatoshis
-          )}') undercommits the current floor of (${currentFloor}) satoshis.`,
-        });
-
-        // Notify the admin about the event.
-        req.app.debug.server(
-          "Contribution rejection (amount undercommitment) returned to " +
-          req.ip
-        );
-
-        // Return false to indicate failure and stop processing.
-        return false;
-      }
-
-      // Calculate how far over (or under) committed this contribution makes the contract.
-      const overCommitment = Math.round(
-        currentCommittedSatoshis +
-        totalSatoshis -
-        (contract.totalContractOutputValue + currentMinerFee)
-      );
-
-      // Verify that the current contribution does not overcommit the contract.
-      if (overCommitment > 0) {
-        // Send an BAD REQUEST signal back to the client.
-        res.status(400).json({
-          status: `The contribution amount ('${Math.round(
-            totalSatoshis
-          )}') overcommits the contract by (${overCommitment}) satoshis.`,
-        });
-
-        // Notify the admin about the event.
-        req.app.debug.server(
-          "Contribution rejection (amount overcommitment) returned to " + req.ip
-        );
-
-        // Return false to indicate failure and stop processing.
-        return false;
-      }
-
+         
       // Store the user to the database.
       const storeUserResult = req.app.queries.addUser.run({
         user_url: null,
@@ -577,74 +461,92 @@ const submitContribution = async function (req, res) {
       });
 
       // Push the contribution to the SSE stream.
-      req.app.sse.event(req.params["campaign_id"], {
-        event: "contribution", 
-        data: contributionData
-      });
+      req.app.sse.event(req.params["campaign_id"], "contribution", contributionData);
 
-      // Get an updates list of contributions.
-      const campaignContributions = req.app.queries.listContributionsByCampaign.all({ 
-        campaign_id: req.params["campaign_id"]
-      }).filter(c => !c.revocation_id)
+      const currentCommittedSatoshis = req.app.queries.getCampaignCommittedSatoshis.get(
+        { campaign_id: Number(req.params["campaign_id"]) }
+      ).committed_satoshis;
 
-      // Add relevant contributions to the contract..
-      for (const currentContribution in campaignContributions) {
-        const commitment = campaignContributions[currentContribution];
+      // attempt to run the contract even if mining fees isn't fully paid, since the sats per contribution is so high.
+      // two sats per byte not counted towards their donation covers the fees, God willing.
+      if (currentCommittedSatoshis >= contract.totalContractOutputValue) {
+        
+        // Get an updates list of contributions.
+        const campaignContributions = req.app.queries.listContributionsByCampaign.all({ 
+          campaign_id: req.params["campaign_id"]
+        }).filter(c => !c.revocation_id)
 
-        const commitmentObject = {
-          previousTransactionHash: commitment.previous_transaction_hash,
-          previousTransactionOutputIndex: commitment.previous_transaction_index,
-          unlockScript: commitment.unlock_script,
-          sequenceNumber: commitment.sequence_number,
-          value: commitment.satoshis,
-        };
+        // Add relevant contributions to the contract..
+        for (const currentContribution in campaignContributions) {
+          const commitment = campaignContributions[currentContribution];
 
-        contract.addCommitment(commitmentObject);
-      }
+          const commitmentObject = {
+            previousTransactionHash: commitment.previous_transaction_hash,
+            previousTransactionOutputIndex: commitment.previous_transaction_index,
+            unlockScript: commitment.unlock_script,
+            sequenceNumber: commitment.sequence_number,
+            value: commitment.satoshis
+          };
 
-      // Fullfill contract if possible.
-      if (contract.remainingCommitmentValue === 0) {
-        // Get a mutex lock for transaction updates ready.
-        // NOTE: This ensures that the broadcasted fullfillment gets stored in the database
-        //       before the revocations for it can be processed, avoidin invalid UI updates.
-        const unlock = await req.app.checkForTransactionUpdatesLock.acquire();
+          contract.addCommitment(commitmentObject);
 
-        try {
-          // Assemble commitments into transaction
-          const rawTransaction = contract.assembleTransaction();
-
-          // Broadcast transaction
-          const broadcastResult = await req.app.electrum.request(
-            "blockchain.transaction.broadcast",
-            rawTransaction.toString("hex")
-          );
-
-          // If we successfully broadcasted the transaction..
-          if (broadcastResult) {
-            // structure a fullfillment object.
-            const fullfillmentObject = {
-              fullfillment_timestamp: moment().unix(),
-              fullfillment_transaction: broadcastResult,
-              campaign_id: Number(req.params["campaign_id"]),
-            };
-
-            // Store the fullfillment in the database.
-            req.app.queries.addCampaignFullfillment.run(fullfillmentObject);
-
-            // Push the fullfillment to the SSE stream.
-            req.app.sse.event(req.params["campaign_id"], {
-              event: "fullfillment", 
-              data: fullfillmentObject
-            });
-
-            // Notify the server admin that a campaign has been fullfilled.
-            req.app.debug.action(
-              `Fullfilled campaign #${req.params["campaign_id"]} with transaction ${broadcastResult}`
-            );
+          // To compensate for accepting all contributions for unfullfilled contract, only use what we need.
+          // SQL returns ordered set least to greatest satoshis
+          // TODO God willing: periodically try to fullfill campaign if didn't work. Continue to accept satoshis, God willing.
+          if (contract.remainingCommitmentValue === 0) {
+            break
           }
-        } finally {
-          // Unlock the mutex so the next process can continue.
-          unlock();
+        }
+
+        // Fullfill contract if possible.
+        if (contract.remainingCommitmentValue === 0) {
+          // Get a mutex lock for transaction updates ready.
+          // NOTE: This ensures that the broadcasted fullfillment gets stored in the database
+          //       before the revocations for it can be processed, avoidin invalid UI updates.
+          const unlock = await req.app.checkForTransactionUpdatesLock.acquire();
+
+          try {
+            // Assemble commitments into transaction
+            const rawTransaction = contract.assembleTransaction();
+
+            // Broadcast transaction
+            let broadcastResult = await req.app.electrum.request(
+              "blockchain.transaction.broadcast",
+              rawTransaction.toString("hex")
+            );
+            
+            if (typeof(broadcastResult) !== "string") {
+              req.app.debug.server("Broadcast result is not a string as expected")
+              req.app.debug.object(broadcastResult)
+
+              broadcastResult = broadcastResult.toString('hex')
+              req.app.debug.object(broadcastResult)
+            }
+
+            // If we successfully broadcasted the transaction..
+            if (broadcastResult) {
+              // structure a fullfillment object.
+              const fullfillmentObject = {
+                fullfillment_timestamp: moment().unix(),
+                fullfillment_transaction: broadcastResult,
+                campaign_id: Number(req.params["campaign_id"]),
+              };
+
+              // Store the fullfillment in the database.
+              req.app.queries.addCampaignFullfillment.run(fullfillmentObject);
+
+              // Push the fullfillment to the SSE stream.
+              req.app.sse.event(req.params["campaign_id"], "fullfillment", fullfillmentObject);
+
+              // Notify the server admin that a campaign has been fullfilled.
+              req.app.debug.action(
+                `Fullfilled campaign #${req.params["campaign_id"]} with transaction ${broadcastResult}`
+              );
+            }
+          } finally {
+            // Unlock the mutex so the next process can continue.
+            unlock();
+          }
         }
       }
 

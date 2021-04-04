@@ -62,14 +62,14 @@ const setup = async function () {
   const hubs = {}
   app.sse = {
     //Handle requests from server to push to clients
-    event: (campaignId, eventData) => {
+    event: (campaignId, eventName, eventData) => {
       
       if (!hubs[campaignId]) {
         hubs[campaignId] = new Hub();
       }
 
       const hub = hubs[campaignId]
-      hub.event(campaignId, eventData)
+      hub.event(eventName, eventData)
     }
   }
 
@@ -118,6 +118,7 @@ const setup = async function () {
     });
 
     if (typeof campaign === "undefined") {
+      res.status(404).end()
       return
     }
 
@@ -128,12 +129,17 @@ const setup = async function () {
     return hubs[campaignId]
 
   }), (req, res) => {
-    
+       
+    // Fetch the campaign data.
+    const campaign = req.app.queries.getCampaign.get({
+      campaign_id: req.params["campaign_id"],
+    });
+
     const campaignContributions = req.app.queries.listContributionsByCampaign.all({ 
       campaign_id: req.params["campaign_id"]
-    }).filter(c => !c.revocation_id)
-    
-    res.sse.event("init", campaignContributions)
+    }).filter(c => !c.revocation_id || (campaign.fullfillment_timestamp && c.revocation_timestamp > campaign.fullfillment_timestamp))
+
+    res.sse.event("init", { ...campaign, id: campaign.campaign_id, contributions: campaignContributions })
   });
 
   if (process.env.FLIPSTARTER_API_AUTH !== "confirmed-contributions" && process.env.FLIPSTARTER_API_AUTH !== "pending-contributions" && process.env.FLIPSTARTER_API_AUTH !== "no-auth") {
@@ -256,10 +262,7 @@ const setup = async function () {
               !contributionData.fullfillment_id
             ) {
               // Push the contribution to the SSE stream.
-              app.sse.event(contributionData.campaign_id, {
-                event: "revocation",
-                data: contributionData
-              });
+              app.sse.event(contributionData.campaign_id, "revocation", contributionData);
             }
 
             // If we are currently subscribed to changes for this script hash..

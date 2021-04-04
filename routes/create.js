@@ -12,6 +12,7 @@ const create = async function (req, res) {
   // Notify the server admin that a campaign has been requested.
   req.app.debug.server("Create page requested from " + req.ip);
 
+  //Redirect to IPFS create page with prefilled information on our server address
   let apiUrl = (process.env.FLIPSTARTER_API_URL || req.get('host')).replace(/\/$/, "")
 
   if (!apiUrl.match(/^(http:\/\/|https:\/\/|\/\/)/)) {
@@ -110,7 +111,7 @@ const initCapampaign = async function (req, res) {
       app.queries.addRecipientToCampaign.run({
         user_id: addUserResult.lastInsertRowid,
         campaign_id: createCampaignResult.lastInsertRowid,
-        recipient_satoshis: recipient.satoshis
+        recipient_satoshis: parseInt(recipient.satoshis)
       });
     })
 
@@ -118,6 +119,7 @@ const initCapampaign = async function (req, res) {
     // and redirect to home if they try
     app.freshInstall = false;
 
+    //Return our server address for use in users client side flipstarter application
     let address = (process.env.FLIPSTARTER_API_URL || req.get('host')).replace(/\/$/, "")
 
     if (!address.match(/^(http:\/\/|https:\/\/|\/\/)/)) {
