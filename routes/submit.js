@@ -52,6 +52,22 @@ class javascriptUtilities {
   }
 }
 
+const calculateMinerFee = function (RECIPIENT_COUNT, CONTRIBUTION_COUNT, TARGET_FEE_RATE = 1) {
+  // Define byte weights for different transaction parts.
+  const TRANSACTION_METADATA_BYTES = 10;
+  const AVERAGE_BYTE_PER_RECIPIENT = 69;
+  const AVERAGE_BYTE_PER_CONTRIBUTION = 296;
+
+  // Calculate the miner fee necessary to cover a fullfillment transaction with the next (+1) contribution.
+  const MINER_FEE =
+    (TRANSACTION_METADATA_BYTES +
+      AVERAGE_BYTE_PER_RECIPIENT * RECIPIENT_COUNT +
+      AVERAGE_BYTE_PER_CONTRIBUTION * (CONTRIBUTION_COUNT)) *
+    TARGET_FEE_RATE;
+
+  // Return the calculated miner fee.
+  return MINER_FEE;
+};
 
 function getOutputScriptPubKeyHex(output) {
   const scriptPubKey = output.scriptPubKey
@@ -466,10 +482,13 @@ const submitContribution = async function (req, res) {
       const currentCommittedSatoshis = req.app.queries.getCampaignCommittedSatoshis.get(
         { campaign_id: Number(req.params["campaign_id"]) }
       ).committed_satoshis;
+			
+      const currentContributionCount = req.app.queries.countCommitmentsByCampaign.get({ 
+        campaign_id: Number(req.params['campaign_id']) 
+      }).commitment_count;
 
-      // attempt to run the contract even if mining fees isn't fully paid, since the sats per contribution is so high.
-      // two sats per byte not counted towards their donation covers the fees, God willing.
-      if (currentCommittedSatoshis >= contract.totalContractOutputValue) {
+      // attempt to run the contract as long as the recipient miner fees of 1byte per satoshi.
+      if (currentCommittedSatoshis >= contract.totalContractOutputValue + calculateMinerFee(recipients.length, currentContributionCount, process.env.FLIPSTARTER_TARGET_FEE_RATE || 1)) {
         
         // Get an updates list of contributions.
         const campaignContributions = req.app.queries.listContributionsByCampaign.all({ 
@@ -514,7 +533,13 @@ const submitContribution = async function (req, res) {
               "blockchain.transaction.broadcast",
               rawTransaction.toString("hex")
             );
-            
+
+            if (broadcastResult instanceof Error) {
+              req.app.debug.server("Error fullfilling campaign:")
+              req.app.debug.error(broadcastResult)
+              return
+            }
+
             if (typeof(broadcastResult) !== "string") {
               req.app.debug.server("Broadcast result is not a string as expected")
               req.app.debug.object(broadcastResult)
